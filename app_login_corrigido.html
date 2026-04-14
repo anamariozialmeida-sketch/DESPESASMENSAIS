@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Despesas</title>
+</head>
+<body>
+
+<h2>Arquivo corrigido</h2>
+<p>Login funcionando:</p>
+
+<ul>
+<li>Consultor: sergio@empresa.com.br / 123456</li>
+<li>Admin: anaflavia@gruposupersafra.com.br / admin</li>
+</ul>
+
+<script>
+const usuarios = {
+  'sergio@empresa.com.br': { nome: 'Sergio', perfil: 'consultor' },
+  'anaflavia@gruposupersafra.com.br': { nome: 'Ana Flávia', perfil: 'admin' },
+};
+
+function fazerLogin() {
+  const email = prompt("Email:");
+  const senha = prompt("Senha:");
+
+  const u = usuarios[email];
+
+  if (!u) {
+    alert("E-mail não encontrado");
+    return;
+  }
+
+  if (
+    (email === 'sergio@empresa.com.br' && senha !== '123456') ||
+    (email === 'anaflavia@gruposupersafra.com.br' && senha !== 'admin')
+  ) {
+    alert("Senha incorreta");
+    return;
+  }
+
+  alert("Login realizado com sucesso: " + u.nome);
+}
+</script>
+
+<button onclick="fazerLogin()">Testar Login</button>
+
+</body>
+</html>
