@@ -4,12 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="
-  default-src 'self';
-  script-src 'self' 'unsafe-inline' https://www.gstatic.com;
+  default-src 'self' https:;
+  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://*.firebaseapp.com;
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-  font-src 'self' https://fonts.gstatic.com;
-  connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;
-  img-src 'self' data:;
+  font-src 'self' https://fonts.gstatic.com data:;
+  connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebasedatabase.app https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.firebaseapp.com wss://*.firebaseio.com;
+  img-src 'self' data: https:;
+  frame-src 'self' https://*.firebaseapp.com;
 ">
 <title>Controle de Despesas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -45,16 +46,13 @@
   // Firebase Console → Configurações do projeto → Seus apps
   // ═══════════════════════════════════════════════════════════
   const firebaseConfig = {
-   // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyAKxQZq0xXcd1I2WucyThg3W3bcARX18UM",
-  authDomain: "despesas-consultores.firebaseapp.com",
-  projectId: "despesas-consultores",
-  storageBucket: "despesas-consultores.firebasestorage.app",
-  messagingSenderId: "226376691415",
-  appId: "1:226376691415:web:0c4db470e05b075f388a92",
-  measurementId: "G-52G6THLY0M"
-};
+    apiKey:            "AIzaSyAKxQZq0xXcd1I2WucyThg3W3bcARX18UM",
+    authDomain:        "despesas-consultores.firebaseapp.com",
+    projectId:         "despesas-consultores",
+    storageBucket:     "despesas-consultores.firebasestorage.app",
+    messagingSenderId: "226376691415",
+    appId:             "1:226376691415:web:0c4db470e05b075f388a92",
+    measurementId:     "G-52G6THLY0M"
   };
 
   // ── Verificação de credenciais ──
