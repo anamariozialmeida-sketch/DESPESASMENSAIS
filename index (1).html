@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Despesas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- Firebase SDKs -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getAuth,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import {
+    getFirestore,
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    setDoc,
+    addDoc,
+    updateDoc,
+    query,
+    where,
+    orderBy,
+    serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // ═══════════════════════════════════════════════════════════
+  // CONFIGURAÇÃO FIREBASE
+  // Substitua os valores abaixo pelas suas credenciais do
+  // Firebase Console → Configurações do projeto → Seus apps
+  // ═══════════════════════════════════════════════════════════
+  const firebaseConfig = {
+    apiKey:            "COLE_SUA_API_KEY_AQUI",
+    authDomain:        "despesas-consultores.firebaseapp.com",
+    projectId:         "despesas-consultores",
+    storageBucket:     "despesas-consultores.appspot.com",
+    messagingSenderId: "COLE_SEU_MESSAGING_SENDER_ID_AQUI",
+    appId:             "COLE_SEU_APP_ID_AQUI"
+  };
+
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+
+  // ── perfis dos usuários (Firestore: coleção "usuarios") ──
+  // Estrutura esperada: { nome, sigla, perfil: "admin" | "consultor" }
+  // Criar via Firebase Console ou com o script de seed abaixo.
+
+  // ═══════════════════════════════
+  // ESTADO GLOBAL
+  // ═══════════════════════════════
+  window._appState = {
+    usuario: null,        // { uid, email, nome, sigla, perfil }
+    semanaAtual: null,    // id do documento da semana aberta
+    semanas: [],
+    despesas: []
+  };
+
+  // ═══════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════
+  function fmt(val) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+  }
+  function fmtKm(val) {
+    return new Intl.NumberFormat('pt-BR').format(val || 0) + ' km';
+  }
+
+  // ═══════════════════════════════
+  // NAVEGAÇÃO
+  // ═══════════════════════════════
+  window.navTo = function(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    const el = document.getElementById(id);
+    if (el) el.classList.add('active');
+    window.scrollTo(0, 0);
+  };
+
+  // ═══════════════════════════════
+  // LOGIN
+  // ═══════════════════════════════
+  window.fazerLogin = async function() {
+    const email = document.getElementById('login-email').value.trim().toLowerCase();
+    const senha = document.getElementById('login-senha').value;
+    const btnEl  = document.getElementById('btn-login');
+    const errEl  = document.getElementById('login-erro');
+
+    if (!email || !senha) { errEl.textContent = 'Preencha e-mail e senha.'; errEl.style.display='block'; return; }
+    errEl.style.display = 'none';
+    btnEl.textContent = 'Entrando…';
+    btnEl.disabled = true;
+
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, senha);
+      // perfil vem do Firestore
+      const snap = await getDoc(doc(db, 'usuarios', cred.user.uid));
+      if (!snap.exists()) throw new Error('Perfil não encontrado. Contate o administrador.');
+      const perfil = snap.data();
+      window._appState.usuario = { uid: cred.user.uid, email, ...perfil };
+      await iniciarApp();
+    } catch (e) {
+      const msg = traduzirErroAuth(e.code || e.message);
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    } finally {
+      btnEl.textContent = 'Entrar';
+      btnEl.disabled = false;
+    }
+  };
+
+  function traduzirErroAuth(code) {
+    const map = {
+      'auth/invalid-credential':        'E-mail ou senha incorretos.',
+      'auth/user-not-found':            'E-mail não cadastrado.',
+      'auth/wrong-password':            'Senha incorreta.',
+      'auth/too-many-requests':         'Muitas tentativas. Aguarde alguns minutos.',
+      'auth/network-request-failed':    'Sem conexão. Verifique sua internet.',
+      'auth/invalid-email':             'E-mail inválido.',
+    };
+    return map[code] || 'Erro ao entrar. Tente novamente.';
+  }
+
+  window.fazerLogout = async function() {
+    await signOut(auth);
+    window._appState = { usuario: null, semanaAtual: null, semanas: [], despesas: [] };
+    navTo('screen-login');
+  };
+
+  // ═══════════════════════════════
+  // AUTH STATE — persiste sessão
+  // ═══════════════════════════════
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      try {
+        const snap = await getDoc(doc(db, 'usuarios', user.uid));
+        if (snap.exists()) {
+          window._appState.usuario = { uid: user.uid, email: user.email, ...snap.data() };
+          await iniciarApp();
+        } else {
+          navTo('screen-login');
+        }
+      } catch {
+        navTo('screen-login');
+      }
+    } else {
+      navTo('screen-login');
+    }
+  });
+
+  // ═══════════════════════════════
+  // INICIAR APP APÓS LOGIN
+  // ═══════════════════════════════
+  async function iniciarApp() {
+    const u = window._appState.usuario;
+    if (u.perfil === 'admin') {
+      await carregarPainelAdmin();
+      navTo('screen-admin');
+    } else {
+      await carregarHomeConsultor();
+      navTo('screen-home');
+    }
+  }
+
+  // ═══════════════════════════════
+  // HOME CONSULTOR
+  // ═══════════════════════════════
+  async function carregarHomeConsultor() {
+    const u = window._appState.usuario;
+    document.getElementById('home-nome').textContent   = u.nome;
+    document.getElementById('home-avatar').textContent = u.sigla;
+    document.getElementById('admin-nome-topbar').textContent = u.nome;
+
+    // busca semanas do consultor
+    const q = query(
+      collection(db, 'semanas'),
+      where('uid', '==', u.uid),
+      orderBy('criadoEm', 'desc')
+    );
+    const snap = await getDocs(q);
+    window._appState.semanas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderizarSemanas();
+    calcularMetricasMes();
+  }
+
+  function renderizarSemanas() {
+    const lista = window._appState.semanas;
+    const container = document.getElementById('lista-semanas');
+    if (!lista.length) {
+      container.innerHTML = '<p style="font-size:13px;color:var(--text-2);padding:12px 0;">Nenhuma semana registrada ainda.</p>';
+      return;
+    }
+    container.innerHTML = lista.map(s => `
+      <div class="week-item" onclick="abrirSemana('${s.id}')">
+        <div>
+          <div class="week-title">${s.titulo || 'Semana'}</div>
+          <div class="week-sub">${fmtKm(s.totalKm)} · ${fmt(s.totalCombustivel)} combust.</div>
+        </div>
+        <span class="badge ${badgeStatus(s.status)}">${s.status || 'Rascunho'}</span>
+      </div>
+    `).join('');
+  }
+
+  function badgeStatus(status) {
+    const map = { 'Aprovado': 'badge-green', 'Enviado': 'badge-blue', 'Devolvido': 'badge-red', 'Rascunho': 'badge-amber' };
+    return map[status] || 'badge-amber';
+  }
+
+  function calcularMetricasMes() {
+    const semanas = window._appState.semanas;
+    const mes = new Date().getMonth();
+    const semesMes = semanas.filter(s => {
+      if (!s.criadoEm) return true;
+      const d = s.criadoEm.toDate ? s.criadoEm.toDate() : new Date(s.criadoEm);
+      return d.getMonth() === mes;
+    });
+    const km    = semesMes.reduce((a, s) => a + (s.totalKm || 0), 0);
+    const comb  = semesMes.reduce((a, s) => a + (s.totalCombustivel || 0), 0);
+    const total = semesMes.reduce((a, s) => a + (s.totalGeral || 0), 0);
+    const litros= semesMes.reduce((a, s) => a + (s.totalLitros || 0), 0);
+    const media = litros > 0 ? (km / litros).toFixed(1) : '—';
+
+    document.getElementById('met-km').textContent    = new Intl.NumberFormat('pt-BR').format(km);
+    document.getElementById('met-media').textContent = media;
+    document.getElementById('met-comb').textContent  = fmt(comb);
+    document.getElementById('met-total').textContent = fmt(total);
+
+    const nomeMes = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    document.getElementById('label-mes').textContent = nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1);
+  }
+
+  // ═══════════════════════════════
+  // SEMANA — ABRIR / CRIAR
+  // ═══════════════════════════════
+  window.abrirSemana = async function(id) {
+    window._appState.semanaAtual = id;
+    const snap = await getDoc(doc(db, 'semanas', id));
+    const semana = { id, ...snap.data() };
+    preencherTelaSemana(semana);
+    navTo('screen-semana');
+  };
+
+  window.irParaNovaSemana = async function() {
+    const u = window._appState.usuario;
+    const hoje = new Date();
+    // calcula início (segunda) e fim (domingo) da semana atual
+    const diaSemana = hoje.getDay() === 0 ? 6 : hoje.getDay() - 1;
+    const seg = new Date(hoje); seg.setDate(hoje.getDate() - diaSemana);
+    const dom = new Date(seg);  dom.setDate(seg.getDate() + 6);
+    const fmt2 = d => d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+    const titulo = `${fmt2(seg)} a ${fmt2(dom)}/${dom.getFullYear()}`;
+
+    const ref = await addDoc(collection(db, 'semanas'), {
+      uid: u.uid,
+      nomeConsultor: u.nome,
+      titulo,
+      status: 'Rascunho',
+      totalKm: 0,
+      totalCombustivel: 0,
+      totalGeral: 0,
+      totalLitros: 0,
+      diasKm: [],
+      criadoEm: serverTimestamp()
+    });
+    window._appState.semanaAtual = ref.id;
+    preencherTelaSemana({ id: ref.id, titulo, status: 'Rascunho', diasKm: [] });
+    navTo('screen-semana');
+  };
+
+  function preencherTelaSemana(semana) {
+    document.getElementById('semana-titulo').textContent = semana.titulo || 'Semana';
+    document.getElementById('semana-badge').className = 'badge ' + badgeStatus(semana.status);
+    document.getElementById('semana-badge').textContent = semana.status || 'Rascunho';
+
+    // preencher grid de KM
+    const dias = semana.diasKm || [];
+    for (let i = 0; i < 6; i++) {
+      const d = dias[i] || {};
+      const dest = document.getElementById(`dest-${i}`);
+      const ini  = document.getElementById(`ini-${i}`);
+      const fin  = document.getElementById(`fin-${i}`);
+      if (dest) dest.value = d.destino || '';
+      if (ini)  ini.value  = d.kmIni || '';
+      if (fin)  fin.value  = d.kmFin || '';
+      const tot = document.getElementById('tot-' + i);
+      if (tot) {
+        const diff = (d.kmFin || 0) - (d.kmIni || 0);
+        tot.textContent = diff > 0 ? diff : '—';
+      }
+    }
+    recalcTotalKm();
+    carregarDespesasSemana(semana.id);
+  }
+
+  // ═══════════════════════════════
+  // KM CALC
+  // ═══════════════════════════════
+  window.calcTotal = function(input) {
+    const row = input.closest('tr');
+    if (!row) return;
+    const inputs = row.querySelectorAll('input[type="number"]');
+    if (inputs.length < 2) return;
+    const ini = parseFloat(inputs[0].value) || 0;
+    const fin = parseFloat(inputs[1].value) || 0;
+    const rowIdx = input.dataset.row;
+    const totEl = document.getElementById('tot-' + rowIdx);
+    if (totEl) totEl.textContent = fin - ini > 0 ? (fin - ini) : '—';
+    recalcTotalKm();
+  };
+
+  window.recalcTotalKm = function() {
+    let total = 0;
+    for (let i = 0; i < 6; i++) {
+      const el = document.getElementById('tot-' + i);
+      if (el) { const v = parseInt(el.textContent); if (!isNaN(v)) total += v; }
+    }
+    const el = document.getElementById('km-total');
+    if (el) el.textContent = fmtKm(total);
+    return total;
+  };
+
+  window.salvarKm = async function() {
+    const id = window._appState.semanaAtual;
+    if (!id) return;
+    const diasKm = [];
+    let totalKm = 0;
+    for (let i = 0; i < 6; i++) {
+      const dest = document.getElementById(`dest-${i}`)?.value || '';
+      const ini  = parseFloat(document.getElementById(`ini-${i}`)?.value) || 0;
+      const fin  = parseFloat(document.getElementById(`fin-${i}`)?.value) || 0;
+      const km   = fin - ini > 0 ? fin - ini : 0;
+      diasKm.push({ destino: dest, kmIni: ini, kmFin: fin, km });
+      totalKm += km;
+    }
+    await updateDoc(doc(db, 'semanas', id), { diasKm, totalKm });
+    showToast('KM salvo!');
+    document.getElementById('km-total').textContent = fmtKm(totalKm);
+  };
+
+  // ═══════════════════════════════
+  // DESPESAS
+  // ═══════════════════════════════
+  async function carregarDespesasSemana(semanaId) {
+    const q = query(collection(db, 'despesas'), where('semanaId', '==', semanaId), orderBy('criadoEm', 'asc'));
+    try {
+      const snap = await getDocs(q);
+      window._appState.despesas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {
+      window._appState.despesas = [];
+    }
+    renderizarDespesas();
+    recalcResumoSemana();
+  }
+
+  function renderizarDespesas() {
+    const lista = window._appState.despesas;
+    const container = document.getElementById('lista-despesas');
+    if (!lista.length) {
+      container.innerHTML = '<div class="card-row"><span style="font-size:13px;color:var(--text-2);">Nenhuma despesa adicionada.</span></div>';
+    } else {
+      container.innerHTML = lista.map(d => `
+        <div class="card-row">
+          <div>
+            <div style="font-size:14px;font-weight:500;">${d.tipo} — ${d.dia || ''}</div>
+            <div style="font-size:12px;color:var(--text-2);">${d.obs || ''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-family:var(--mono);font-weight:600;">${fmt(d.valor)}</span>
+            <button onclick="excluirDespesa('${d.id}')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:12px;padding:2px 6px;">✕</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  async function recalcResumoSemana() {
+    const despesas = window._appState.despesas;
+    const id = window._appState.semanaAtual;
+    let totalCombustivel = 0, totalOutras = 0, totalLitros = 0;
+    despesas.forEach(d => {
+      if (d.tipo === 'Combustível') { totalCombustivel += d.valor || 0; totalLitros += d.litros || 0; }
+      else totalOutras += d.valor || 0;
+    });
+    const km = recalcTotalKm();
+    const media = totalLitros > 0 ? (km / totalLitros).toFixed(1) : '—';
+    const totalGeral = totalCombustivel + totalOutras;
+
+    document.getElementById('res-km').textContent     = fmtKm(km);
+    document.getElementById('res-litros').textContent = totalLitros.toFixed(2) + ' L';
+    document.getElementById('res-media').textContent  = media;
+    document.getElementById('res-comb').textContent   = fmt(totalCombustivel);
+    document.getElementById('res-outras').textContent = fmt(totalOutras);
+    document.getElementById('res-total').textContent  = fmt(totalGeral);
+
+    if (id) {
+      await updateDoc(doc(db, 'semanas', id), { totalCombustivel, totalGeral, totalLitros });
+    }
+  }
+
+  window.selecionarTipo = function(pill, tipo) {
+    document.querySelectorAll('.tipo-pill').forEach(p => p.classList.remove('selected'));
+    pill.classList.add('selected');
+    document.getElementById('litros-group').style.display = tipo === 'combustivel' ? 'block' : 'none';
+    document.getElementById('odometro-group').style.display = tipo === 'combustivel' ? 'block' : 'none';
+    document.getElementById('media-preview').style.display = 'none';
+  };
+
+  document.addEventListener('input', function(e) {
+    const litrosEl = document.getElementById('desp-litros');
+    const odomEl   = document.getElementById('desp-odom');
+    const mediaEl  = document.getElementById('media-preview');
+    const mediaVal = document.getElementById('media-valor');
+    if (!litrosEl || !odomEl) return;
+    const litros = parseFloat(litrosEl.value);
+    const km = recalcTotalKm();
+    if (litros > 0 && km > 0) {
+      mediaEl.style.display = 'block';
+      mediaVal.textContent  = (km / litros).toFixed(1) + ' km/l';
+    }
+  });
+
+  window.salvarDespesa = async function() {
+    const id = window._appState.semanaAtual;
+    if (!id) { showToast('Nenhuma semana aberta.'); return; }
+    const tipoEl  = document.querySelector('.tipo-pill.selected');
+    const tipo    = tipoEl ? tipoEl.textContent : 'Outras';
+    const valor   = parseFloat(document.getElementById('desp-valor')?.value) || 0;
+    const litros  = parseFloat(document.getElementById('desp-litros')?.value) || 0;
+    const obs     = document.getElementById('desp-obs')?.value || '';
+    const diaEl   = document.getElementById('desp-dia');
+    const dia     = diaEl ? diaEl.options[diaEl.selectedIndex]?.text : '';
+
+    if (!valor) { showToast('Informe o valor da despesa.'); return; }
+
+    await addDoc(collection(db, 'despesas'), {
+      semanaId: id,
+      uid: window._appState.usuario.uid,
+      tipo, valor, litros, obs, dia,
+      criadoEm: serverTimestamp()
+    });
+    showToast('Despesa salva!');
+    document.getElementById('desp-valor').value  = '';
+    document.getElementById('desp-litros').value = '';
+    if (document.getElementById('desp-odom'))  document.getElementById('desp-odom').value  = '';
+    if (document.getElementById('desp-obs'))   document.getElementById('desp-obs').value   = '';
+    await carregarDespesasSemana(id);
+    setTimeout(() => navTo('screen-semana'), 500);
+  };
+
+  window.excluirDespesa = async function(despId) {
+    if (!confirm('Excluir esta despesa?')) return;
+    const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+    await deleteDoc(doc(db, 'despesas', despId));
+    const id = window._appState.semanaAtual;
+    await carregarDespesasSemana(id);
+    showToast('Despesa excluída.');
+  };
+
+  // ═══════════════════════════════
+  // ENVIAR SEMANA
+  // ═══════════════════════════════
+  window.enviarSemana = async function() {
+    const id = window._appState.semanaAtual;
+    if (!id) return;
+    await updateDoc(doc(db, 'semanas', id), { status: 'Enviado' });
+    document.getElementById('semana-badge').className = 'badge badge-blue';
+    document.getElementById('semana-badge').textContent = 'Enviado';
+    showToast('Semana enviada para aprovação!');
+    await carregarHomeConsultor();
+    setTimeout(() => navTo('screen-home'), 800);
+  };
+
+  window.salvarRascunho = async function() {
+    await salvarKm();
+    showToast('Rascunho salvo!');
+  };
+
+  // ═══════════════════════════════
+  // CHECKLIST
+  // ═══════════════════════════════
+  window.toggleChk = function(btn, tipo) {
+    btn.parentElement.querySelectorAll('.check-btn').forEach(b => b.classList.remove('ok','nok'));
+    btn.classList.add(tipo);
+  };
+
+  window.enviarChecklist = async function() {
+    const id = window._appState.semanaAtual;
+    const obs = document.getElementById('chk-obs')?.value || '';
+    const itens = [];
+    document.querySelectorAll('.check-item').forEach(item => {
+      const label = item.querySelector('.check-item-label')?.textContent || '';
+      const ok    = item.querySelector('.check-btn.ok');
+      const nok   = item.querySelector('.check-btn.nok');
+      itens.push({ label, status: ok ? 'ok' : nok ? 'atencao' : 'pendente' });
+    });
+    if (id) {
+      await updateDoc(doc(db, 'semanas', id), { checklist: itens, checklistObs: obs });
+    }
+    showToast('Checklist enviado!');
+    setTimeout(() => navTo('screen-home'), 600);
+  };
+
+  // ═══════════════════════════════
+  // PAINEL ADMIN
+  // ═══════════════════════════════
+  async function carregarPainelAdmin() {
+    const u = window._appState.usuario;
+    document.getElementById('admin-nome').textContent = u.nome;
+    document.getElementById('admin-sigla').textContent = u.sigla;
+
+    const mes = new Date().getMonth();
+    const ano = new Date().getFullYear();
+    const nomeMes = new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    document.getElementById('admin-label-mes').textContent = nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1) + ' — todos os consultores';
+
+    const q = query(collection(db, 'semanas'), orderBy('criadoEm', 'desc'));
+    const snap = await getDocs(q);
+    const todas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // semanas do mês atual
+    const doMes = todas.filter(s => {
+      if (!s.criadoEm) return true;
+      const d = s.criadoEm.toDate ? s.criadoEm.toDate() : new Date(s.criadoEm);
+      return d.getMonth() === mes && d.getFullYear() === ano;
+    });
+
+    const totalKm    = doMes.reduce((a, s) => a + (s.totalKm || 0), 0);
+    const totalGeral = doMes.reduce((a, s) => a + (s.totalGeral || 0), 0);
+    document.getElementById('admin-met-km').textContent    = new Intl.NumberFormat('pt-BR').format(totalKm);
+    document.getElementById('admin-met-total').textContent = fmt(totalGeral);
+
+    // por consultor
+    const porConsultor = {};
+    doMes.forEach(s => {
+      const n = s.nomeConsultor || s.uid;
+      if (!porConsultor[n]) porConsultor[n] = { km: 0, comb: 0, total: 0 };
+      porConsultor[n].km    += s.totalKm || 0;
+      porConsultor[n].comb  += s.totalCombustivel || 0;
+      porConsultor[n].total += s.totalGeral || 0;
+    });
+
+    const tabelaEl = document.getElementById('admin-tabela-consultores');
+    tabelaEl.innerHTML = Object.entries(porConsultor).map(([nome, v]) => `
+      <div class="consultant-row">
+        <span style="font-weight:500;">${nome}</span>
+        <span class="mono">${new Intl.NumberFormat('pt-BR').format(v.km)}</span>
+        <span class="mono">${fmt(v.comb)}</span>
+        <span class="mono">${fmt(v.total)}</span>
+      </div>
+    `).join('') || '<div class="consultant-row"><span style="color:var(--text-2);font-size:13px;">Nenhum dado ainda.</span></div>';
+
+    // semanas aguardando aprovação
+    const aguardando = todas.filter(s => s.status === 'Enviado');
+    const aprovEl = document.getElementById('admin-aguardando');
+    aprovEl.innerHTML = aguardando.length ? aguardando.map(s => `
+      <div class="week-item">
+        <div>
+          <div class="week-title">${s.nomeConsultor || ''} · ${s.titulo || ''}</div>
+          <div class="week-sub">${fmtKm(s.totalKm)} · ${fmt(s.totalCombustivel)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <span class="badge badge-blue">Enviado</span>
+          <div style="display:flex;gap:4px;">
+            <button onclick="aprovarSemana('${s.id}')" style="font-size:11px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Aprovar</button>
+            <button onclick="devolverSemana('${s.id}')" style="font-size:11px;padding:2px 8px;background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Devolver</button>
+          </div>
+        </div>
+      </div>
+    `).join('') : '<p style="padding:14px 16px;font-size:13px;color:var(--text-2);">Nenhuma semana aguardando aprovação.</p>';
+  }
+
+  window.aprovarSemana = async function(id) {
+    await updateDoc(doc(db, 'semanas', id), { status: 'Aprovado' });
+    showToast('Semana aprovada!');
+    await carregarPainelAdmin();
+  };
+
+  window.devolverSemana = async function(id) {
+    await updateDoc(doc(db, 'semanas', id), { status: 'Devolvido' });
+    showToast('Semana devolvida.');
+    await carregarPainelAdmin();
+  };
+
+  // ═══════════════════════════════
+  // TOAST
+  // ═══════════════════════════════
+  window.showToast = function(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2200);
+  };
+
+  // ═══════════════════════════════
+  // ATALHOS DE NAVEGAÇÃO
+  // ═══════════════════════════════
+  window.irParaSemana    = () => navTo('screen-semana');
+  window.irParaDespesa   = () => {
+    // preenche o select de dia com datas da semana atual
+    const diaEl = document.getElementById('desp-dia');
+    if (diaEl) {
+      const semanas = window._appState.semanas;
+      const id = window._appState.semanaAtual;
+      const s = semanas.find(x => x.id === id);
+      if (s && s.diasKm && s.diasKm.length) {
+        diaEl.innerHTML = s.diasKm.map((d, i) => `<option>${d.destino ? d.destino : 'Dia ' + (i+1)}</option>`).join('');
+      }
+    }
+    navTo('screen-despesa');
+  };
+</script>
+
+<style>
+:root {
+  --bg: #F5F4F0;
+  --surface: #FFFFFF;
+  --surface2: #EFEFEB;
+  --border: rgba(0,0,0,0.09);
+  --border-strong: rgba(0,0,0,0.18);
+  --text: #1A1A18;
+  --text-2: #6B6B65;
+  --text-3: #A8A8A2;
+  --green: #1B7C4A;
+  --green-bg: #E8F5EE;
+  --green-border: #A3D4B8;
+  --amber: #8A5A00;
+  --amber-bg: #FFF4DC;
+  --amber-border: #F0CC80;
+  --red: #B33030;
+  --red-bg: #FEF0F0;
+  --red-border: #F5B8B8;
+  --blue: #1A5FA8;
+  --blue-bg: #EBF3FD;
+  --blue-border: #A8CFEF;
+  --accent: #1A1A18;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --font: 'DM Sans', sans-serif;
+  --mono: 'DM Mono', monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 0;
+}
+.app-shell {
+  width: 100%;
+  max-width: 430px;
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.screen { display: none; flex-direction: column; flex: 1; animation: fadeIn 0.18s ease; }
+.screen.active { display: flex; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; }
+h2 { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; }
+h3 { font-size: 15px; font-weight: 600; }
+p { line-height: 1.5; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-back {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 500; color: var(--text-2);
+  cursor: pointer; background: none; border: none; font-family: var(--font);
+}
+.topbar-back:hover { color: var(--text); }
+.topbar-title { font-size: 15px; font-weight: 600; }
+.topbar-action { font-size: 13px; font-weight: 500; color: var(--blue); cursor: pointer; background: none; border: none; font-family: var(--font); }
+.scroll-content { flex: 1; overflow-y: auto; padding: 16px 20px 100px; }
+.bottom-nav {
+  position: sticky; bottom: 0;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 0 max(env(safe-area-inset-bottom), 10px);
+  z-index: 10;
+}
+.bnav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer; font-size: 11px; font-weight: 500; color: var(--text-3);
+  padding: 4px 0; transition: color 0.15s;
+}
+.bnav-item.active { color: var(--text); }
+.bnav-item svg { width: 22px; height: 22px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.card-body { padding: 14px 16px; }
+.card-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.card-row:last-child { border-bottom: none; }
+.metrics-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+}
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+}
+.metric-label { font-size: 12px; color: var(--text-2); margin-bottom: 4px; font-weight: 500; }
+.metric-value { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; font-family: var(--mono); }
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 3px 9px; border-radius: 20px; border: 1px solid;
+}
+.badge-green { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.badge-amber { background: var(--amber-bg); color: var(--amber); border-color: var(--amber-border); }
+.badge-blue  { background: var(--blue-bg);  color: var(--blue);  border-color: var(--blue-border); }
+.badge-red   { background: var(--red-bg);   color: var(--red);   border-color: var(--red-border); }
+.section-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-3);
+  margin: 20px 0 8px;
+}
+.section-label:first-child { margin-top: 0; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; letter-spacing: 0.02em; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  font-size: 14px; font-family: var(--font); color: var(--text);
+  background: var(--surface); outline: none; transition: border-color 0.15s;
+}
+.field input:focus, .field select:focus { border-color: var(--text); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 11px 18px; border-radius: var(--radius);
+  font-size: 14px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; border: 1px solid; transition: opacity 0.15s, transform 0.1s;
+  text-decoration: none;
+}
+.btn:active { transform: scale(0.98); opacity: 0.85; }
+.btn-primary { background: var(--text); color: #fff; border-color: var(--text); }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.btn-success { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.btn-full { width: 100%; margin-bottom: 8px; }
+.btn-ghost { background: none; border: none; color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font); padding: 6px 0; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tipo-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.tipo-pill {
+  padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border-strong);
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  background: var(--surface); color: var(--text-2);
+}
+.tipo-pill.selected { background: var(--text); color: #fff; border-color: var(--text); }
+.upload-box {
+  border: 1.5px dashed var(--border-strong); border-radius: var(--radius);
+  padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.15s;
+}
+.upload-box:hover { border-color: var(--text); }
+.upload-box svg { width: 28px; height: 28px; color: var(--text-3); margin-bottom: 6px; }
+.upload-box p { font-size: 13px; color: var(--text-2); }
+.upload-box span { font-size: 11px; color: var(--text-3); }
+.day-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.day-grid th { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; padding: 0 4px 8px; text-align: left; }
+.day-grid td { padding: 5px 4px; border-top: 1px solid var(--border); vertical-align: middle; }
+.day-grid input {
+  width: 100%; padding: 5px 7px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface2);
+  font-size: 12px; font-family: var(--font); color: var(--text); outline: none;
+}
+.day-grid input:focus { border-color: var(--text); background: var(--surface); }
+.day-total { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--green); text-align: right; }
+.check-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.check-item:last-child { border-bottom: none; }
+.check-item-label { font-size: 14px; }
+.check-buttons { display: flex; gap: 6px; }
+.check-btn {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 1px solid; font-family: var(--font); transition: all 0.15s;
+  background: var(--surface2); color: var(--text-2); border-color: var(--border);
+}
+.check-btn.ok  { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.check-btn.nok { background: var(--red-bg);   color: var(--red);   border-color: var(--red-border); }
+.consultant-row {
+  display: grid; grid-template-columns: 1fr 60px 90px 80px;
+  gap: 8px; align-items: center;
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.consultant-row.header { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.consultant-row:last-child { border-bottom: none; }
+.mono { font-family: var(--mono); }
+.login-header {
+  padding: 48px 28px 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.login-logo {
+  width: 44px; height: 44px; background: var(--text); border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; margin-bottom: 20px;
+}
+.login-logo svg { width: 22px; height: 22px; color: #fff; }
+.avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--surface2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 600; color: var(--text-2);
+  flex-shrink: 0;
+}
+.toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--text); color: #fff; border-radius: var(--radius);
+  padding: 10px 18px; font-size: 13px; font-weight: 500;
+  opacity: 0; transition: all 0.25s; z-index: 999; white-space: nowrap; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.divider { height: 1px; background: var(--border); margin: 8px 0; }
+.week-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  transition: background 0.12s;
+}
+.week-item:hover { background: var(--surface2); }
+.week-item:last-child { border-bottom: none; }
+.week-title { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
+.week-sub { font-size: 12px; color: var(--text-2); }
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: var(--text-2); }
+.stat-value { font-weight: 600; font-family: var(--mono); }
+.erro-msg { color: var(--red); font-size: 13px; background: var(--red-bg); border: 1px solid var(--red-border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; display: none; }
+@media (min-width: 431px) {
+  body { align-items: center; min-height: 100vh; background: #E8E7E3; padding: 20px; }
+  .app-shell { border-radius: 24px; max-height: 90vh; overflow: hidden; box-shadow: 0 4px 40px rgba(0,0,0,0.14); }
+  .screen.active { max-height: 90vh; overflow: hidden; }
+  .scroll-content { overflow-y: auto; }
+}
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+<!-- ══════════════════════════════
+     TELA 1: LOGIN
+════════════════════════════════ -->
+<div id="screen-login" class="screen active">
+  <div class="login-header">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <h1 style="margin-bottom:6px;">Controle de<br>Despesas</h1>
+    <p style="font-size:14px; color:var(--text-2);">Grupo Supersafra</p>
+  </div>
+  <div class="scroll-content" style="padding-top:28px;">
+    <div id="login-erro" class="erro-msg"></div>
+    <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="login-email" placeholder="seu@gruposupersafra.com.br" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" id="login-senha" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter') fazerLogin()">
+    </div>
+    <button id="btn-login" class="btn btn-primary btn-full" style="margin-top:8px;" onclick="fazerLogin()">Entrar</button>
+    <p style="text-align:center; font-size:12px; color:var(--text-3); margin-top:16px;">Primeiro acesso? Solicite ao administrador.</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 2: HOME CONSULTOR
+════════════════════════════════ -->
+<div id="screen-home" class="screen">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="avatar" id="home-avatar">SG</div>
+      <div>
+        <p style="font-size:12px;color:var(--text-2);">Olá,</p>
+        <p style="font-size:15px;font-weight:600;" id="home-nome">Consultor</p>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="fazerLogout()">Sair</button>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label" id="label-mes">Mês atual</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">KM rodados</div>
+        <div class="metric-value" id="met-km">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Média km/l</div>
+        <div class="metric-value" id="met-media">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Combustível</div>
+        <div class="metric-value" style="font-size:17px;" id="met-comb">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Total geral</div>
+        <div class="metric-value" style="font-size:17px;" id="met-total">—</div>
+      </div>
+    </div>
+
+    <div class="section-label">Semanas</div>
+    <div class="card" style="margin-bottom:10px;">
+      <div id="lista-semanas">
+        <div class="week-item"><span style="font-size:13px;color:var(--text-2);">Carregando…</span></div>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="irParaNovaSemana()">+ Nova semana</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item active" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-semana')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-checklist')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 3: SEMANA
+════════════════════════════════ -->
+<div id="screen-semana" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-home')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title" id="semana-titulo">Semana</span>
+    <span class="badge badge-amber" id="semana-badge">Rascunho</span>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label">Percurso em KM</div>
+    <div class="card">
+      <div class="card-body" style="padding:12px 14px;">
+        <table class="day-grid">
+          <thead>
+            <tr>
+              <th style="width:80px;">Dia</th>
+              <th>Destino</th>
+              <th style="width:60px;">KM ini.</th>
+              <th style="width:60px;">KM fin.</th>
+              <th style="width:52px;text-align:right;">Total</th>
+            </tr>
+          </thead>
+          <tbody id="km-tbody">
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Seg</td>
+              <td><input type="text" id="dest-0" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-0" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="0"></td>
+              <td><input type="number" id="fin-0" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="0"></td>
+              <td class="day-total" id="tot-0">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Ter</td>
+              <td><input type="text" id="dest-1" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-1" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="1"></td>
+              <td><input type="number" id="fin-1" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="1"></td>
+              <td class="day-total" id="tot-1">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Qua</td>
+              <td><input type="text" id="dest-2" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-2" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="2"></td>
+              <td><input type="number" id="fin-2" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="2"></td>
+              <td class="day-total" id="tot-2">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Qui</td>
+              <td><input type="text" id="dest-3" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-3" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="3"></td>
+              <td><input type="number" id="fin-3" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="3"></td>
+              <td class="day-total" id="tot-3">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Sex</td>
+              <td><input type="text" id="dest-4" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-4" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="4"></td>
+              <td><input type="number" id="fin-4" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="4"></td>
+              <td class="day-total" id="tot-4">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Sáb</td>
+              <td><input type="text" id="dest-5" placeholder="Destino" oninput="calcTotal(this)"></td>
+              <td><input type="number" id="ini-5" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="5"></td>
+              <td><input type="number" id="fin-5" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="5"></td>
+              <td class="day-total" id="tot-5">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 4px 0;border-top:1px solid var(--border);margin-top:4px;">
+          <span style="font-size:12px;font-weight:600;color:var(--text-2);">TOTAL KM</span>
+          <span id="km-total" style="font-family:var(--mono);font-weight:600;">0 km</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Despesas</div>
+    <div class="card">
+      <div id="lista-despesas">
+        <div class="card-row"><span style="font-size:13px;color:var(--text-2);">Carregando…</span></div>
+      </div>
+      <div class="card-row" style="cursor:pointer;" onclick="irParaDespesa()">
+        <span style="font-size:13px;color:var(--blue);font-weight:500;">+ Adicionar despesa</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="section-label">Resumo da semana</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="stat-row"><span class="stat-label">Total KM</span><span class="stat-value" id="res-km">0 km</span></div>
+        <div class="stat-row"><span class="stat-label">Litros abastecidos</span><span class="stat-value" id="res-litros">0,00 L</span></div>
+        <div class="stat-row"><span class="stat-label">Média km/l</span><span class="stat-value" style="color:var(--green);" id="res-media">—</span></div>
+        <div class="stat-row"><span class="stat-label">Combustível</span><span class="stat-value" id="res-comb">R$ 0,00</span></div>
+        <div class="stat-row"><span class="stat-label">Outras despesas</span><span class="stat-value" id="res-outras">R$ 0,00</span></div>
+        <div class="stat-row"><span class="stat-label">Total semana</span><span class="stat-value" style="font-size:16px;" id="res-total">R$ 0,00</span></div>
+      </div>
+    </div>
+
+    <button class="btn btn-secondary btn-full" onclick="salvarRascunho()">Salvar rascunho</button>
+    <button class="btn btn-success btn-full" onclick="enviarSemana()">Enviar para aprovação</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-checklist')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 4: NOVA DESPESA
+════════════════════════════════ -->
+<div id="screen-despesa" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-semana')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title">Nova despesa</span>
+    <span></span>
+  </div>
+  <div class="scroll-content">
+    <div class="field">
+      <label>Tipo de despesa</label>
+      <div class="tipo-pills">
+        <span class="tipo-pill selected" onclick="selecionarTipo(this,'combustivel')">Combustível</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'refeicao')">Refeição</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'hotel')">Hotel</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'pedagio')">Pedágio</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'lavagem')">Lavagem</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'outras')">Outras</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Dia da semana</label>
+      <select id="desp-dia">
+        <option>Segunda-feira</option>
+        <option>Terça-feira</option>
+        <option>Quarta-feira</option>
+        <option>Quinta-feira</option>
+        <option>Sexta-feira</option>
+        <option>Sábado</option>
+      </select>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Valor (R$)</label>
+        <input type="number" step="0.01" placeholder="0,00" id="desp-valor">
+      </div>
+      <div class="field" id="litros-group">
+        <label>Litros</label>
+        <input type="number" step="0.01" placeholder="0,0" id="desp-litros">
+      </div>
+    </div>
+
+    <div class="field" id="odometro-group">
+      <label>Odômetro atual (km)</label>
+      <input type="number" placeholder="Ex: 8477" id="desp-odom">
+    </div>
+
+    <div id="media-preview" style="display:none; padding:12px 14px; background:var(--green-bg); border:1px solid var(--green-border); border-radius:var(--radius); margin-bottom:14px; font-size:13px; color:var(--green);">
+      Média calculada: <strong id="media-valor">—</strong>
+    </div>
+
+    <div class="field">
+      <label>Cupom / Comprovante</label>
+      <div class="upload-box" onclick="showToast('Upload de foto em breve!')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <rect x="3" y="6" width="18" height="14" rx="2"/>
+          <circle cx="12" cy="13" r="3"/>
+          <path d="M9 6l1-2h4l1 2"/>
+        </svg>
+        <p>Tirar foto ou escolher arquivo</p>
+        <span>JPG, PNG ou PDF · máx. 10 MB</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Observação (opcional)</label>
+      <textarea id="desp-obs" rows="2" placeholder="Ex: posto Shell BR-267" style="resize:none;"></textarea>
+    </div>
+
+    <button class="btn btn-success btn-full" onclick="salvarDespesa()">Salvar despesa</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 5: CHECKLIST
+════════════════════════════════ -->
+<div id="screen-checklist" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-home')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title">Checklist do veículo</span>
+    <span></span>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label">Motor e fluidos</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Nível do óleo</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Nível da água / arrefec.</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Nível do óleo hidráulico</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="section-label">Pneus</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Calibragem (4 rodas + step)</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Desgaste / vida útil</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="section-label">Luzes e elétrica</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Faróis dianteiros</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Lanternas traseiras</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Setas (4 cantos)</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="section-label">Documentação</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">CRLV em dia</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Seguro vigente</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="field" style="margin-top:4px;">
+      <label>Observações gerais</label>
+      <textarea id="chk-obs" rows="3" placeholder="Algum problema ou observação importante..." style="resize:none;"></textarea>
+    </div>
+    <button class="btn btn-success btn-full" onclick="enviarChecklist()">Enviar checklist</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-semana')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 6: ADMIN — PAINEL GERAL
+════════════════════════════════ -->
+<div id="screen-admin" class="screen">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="avatar" style="background:var(--text);color:#fff;" id="admin-sigla">A</div>
+      <div>
+        <p style="font-size:12px;color:var(--text-2);">Administrador</p>
+        <p style="font-size:15px;font-weight:600;" id="admin-nome">Admin</p>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="fazerLogout()">Sair</button>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label" id="admin-label-mes">Mês atual — todos os consultores</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">KM total frota</div>
+        <div class="metric-value" style="font-size:18px;" id="admin-met-km">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Custo total</div>
+        <div class="metric-value" style="font-size:16px;" id="admin-met-total">—</div>
+      </div>
+    </div>
+
+    <div class="section-label">Por consultor</div>
+    <div class="card">
+      <div class="consultant-row header">
+        <span>Consultor</span>
+        <span>KM</span>
+        <span>Combust.</span>
+        <span>Total</span>
+      </div>
+      <div id="admin-tabela-consultores">
+        <div class="consultant-row"><span style="color:var(--text-2);font-size:13px);">Carregando…</span></div>
+      </div>
+    </div>
+
+    <div class="section-label">Semanas aguardando aprovação</div>
+    <div class="card">
+      <div id="admin-aguardando">
+        <p style="padding:14px 16px;font-size:13px;color:var(--text-2);">Carregando…</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+</div><!-- /app-shell -->
+</body>
+</html>
