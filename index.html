@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Despesas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F5F4F0;
+  --surface: #FFFFFF;
+  --surface2: #EFEFEB;
+  --border: rgba(0,0,0,0.09);
+  --border-strong: rgba(0,0,0,0.18);
+  --text: #1A1A18;
+  --text-2: #6B6B65;
+  --text-3: #A8A8A2;
+  --green: #1B7C4A;
+  --green-bg: #E8F5EE;
+  --green-border: #A3D4B8;
+  --amber: #8A5A00;
+  --amber-bg: #FFF4DC;
+  --amber-border: #F0CC80;
+  --red: #B33030;
+  --red-bg: #FEF0F0;
+  --red-border: #F5B8B8;
+  --blue: #1A5FA8;
+  --blue-bg: #EBF3FD;
+  --blue-border: #A8CFEF;
+  --accent: #1A1A18;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --font: 'DM Sans', sans-serif;
+  --mono: 'DM Mono', monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 0;
+}
+.app-shell {
+  width: 100%;
+  max-width: 430px;
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── SCREENS ── */
+.screen { display: none; flex-direction: column; flex: 1; animation: fadeIn 0.18s ease; }
+.screen.active { display: flex; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── TYPOGRAPHY ── */
+h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; }
+h2 { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; }
+h3 { font-size: 15px; font-weight: 600; }
+p { line-height: 1.5; }
+
+/* ── TOP BAR ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-back {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 500; color: var(--text-2);
+  cursor: pointer; background: none; border: none; font-family: var(--font);
+}
+.topbar-back:hover { color: var(--text); }
+.topbar-title { font-size: 15px; font-weight: 600; }
+.topbar-action { font-size: 13px; font-weight: 500; color: var(--blue); cursor: pointer; background: none; border: none; font-family: var(--font); }
+
+/* ── SCROLL CONTENT ── */
+.scroll-content { flex: 1; overflow-y: auto; padding: 16px 20px 100px; }
+
+/* ── BOTTOM NAV ── */
+.bottom-nav {
+  position: sticky; bottom: 0;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 0 max(env(safe-area-inset-bottom), 10px);
+  z-index: 10;
+}
+.bnav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer; font-size: 11px; font-weight: 500; color: var(--text-3);
+  padding: 4px 0; transition: color 0.15s;
+}
+.bnav-item.active { color: var(--text); }
+.bnav-item svg { width: 22px; height: 22px; }
+
+/* ── CARDS ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.card-body { padding: 14px 16px; }
+.card-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.card-row:last-child { border-bottom: none; }
+
+/* ── METRICS ── */
+.metrics-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+}
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+}
+.metric-label { font-size: 12px; color: var(--text-2); margin-bottom: 4px; font-weight: 500; }
+.metric-value { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; font-family: var(--mono); }
+
+/* ── BADGES ── */
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 3px 9px; border-radius: 20px; border: 1px solid;
+}
+.badge-green { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.badge-amber { background: var(--amber-bg); color: var(--amber); border-color: var(--amber-border); }
+.badge-blue  { background: var(--blue-bg);  color: var(--blue);  border-color: var(--blue-border); }
+.badge-red   { background: var(--red-bg);   color: var(--red);   border-color: var(--red-border); }
+
+/* ── SECTION LABELS ── */
+.section-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-3);
+  margin: 20px 0 8px;
+}
+.section-label:first-child { margin-top: 0; }
+
+/* ── FORM ── */
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; letter-spacing: 0.02em; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  font-size: 14px; font-family: var(--font); color: var(--text);
+  background: var(--surface); outline: none; transition: border-color 0.15s;
+}
+.field input:focus, .field select:focus { border-color: var(--text); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 11px 18px; border-radius: var(--radius);
+  font-size: 14px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; border: 1px solid; transition: opacity 0.15s, transform 0.1s;
+  text-decoration: none;
+}
+.btn:active { transform: scale(0.98); opacity: 0.85; }
+.btn-primary { background: var(--text); color: #fff; border-color: var(--text); }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.btn-success { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.btn-full { width: 100%; margin-bottom: 8px; }
+.btn-ghost { background: none; border: none; color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font); padding: 6px 0; }
+
+/* ── TIPO PILLS ── */
+.tipo-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.tipo-pill {
+  padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border-strong);
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  background: var(--surface); color: var(--text-2);
+}
+.tipo-pill.selected { background: var(--text); color: #fff; border-color: var(--text); }
+
+/* ── UPLOAD BOX ── */
+.upload-box {
+  border: 1.5px dashed var(--border-strong); border-radius: var(--radius);
+  padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.15s;
+}
+.upload-box:hover { border-color: var(--text); }
+.upload-box svg { width: 28px; height: 28px; color: var(--text-3); margin-bottom: 6px; }
+.upload-box p { font-size: 13px; color: var(--text-2); }
+.upload-box span { font-size: 11px; color: var(--text-3); }
+
+/* ── DAY GRID ── */
+.day-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.day-grid th { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; padding: 0 4px 8px; text-align: left; }
+.day-grid td { padding: 5px 4px; border-top: 1px solid var(--border); vertical-align: middle; }
+.day-grid input {
+  width: 100%; padding: 5px 7px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface2);
+  font-size: 12px; font-family: var(--font); color: var(--text); outline: none;
+}
+.day-grid input:focus { border-color: var(--text); background: var(--surface); }
+.day-total { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--green); text-align: right; }
+
+/* ── CHECKLIST ── */
+.check-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.check-item:last-child { border-bottom: none; }
+.check-item-label { font-size: 14px; }
+.check-buttons { display: flex; gap: 6px; }
+.check-btn {
+  padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 1px solid; font-family: var(--font); transition: all 0.15s;
+  background: var(--surface2); color: var(--text-2); border-color: var(--border);
+}
+.check-btn.ok { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+.check-btn.nok { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+
+/* ── ADMIN PANEL ── */
+.consultant-row {
+  display: grid; grid-template-columns: 1fr 60px 90px 80px;
+  gap: 8px; align-items: center;
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.consultant-row.header { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.consultant-row:last-child { border-bottom: none; }
+.mono { font-family: var(--mono); }
+
+/* ── LOGIN SCREEN ── */
+.login-header {
+  padding: 48px 28px 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.login-logo {
+  width: 44px; height: 44px; background: var(--text); border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; margin-bottom: 20px;
+}
+.login-logo svg { width: 22px; height: 22px; color: #fff; }
+
+/* ── AVATAR ── */
+.avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--surface2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 600; color: var(--text-2);
+  flex-shrink: 0;
+}
+
+/* ── TOAST ── */
+.toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--text); color: #fff; border-radius: var(--radius);
+  padding: 10px 18px; font-size: 13px; font-weight: 500;
+  opacity: 0; transition: all 0.25s; z-index: 999; white-space: nowrap; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── DIVIDER ── */
+.divider { height: 1px; background: var(--border); margin: 8px 0; }
+
+/* ── WEEK ITEM ── */
+.week-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer;
+  transition: background 0.12s;
+}
+.week-item:hover { background: var(--surface2); }
+.week-item:last-child { border-bottom: none; }
+.week-title { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
+.week-sub { font-size: 12px; color: var(--text-2); }
+
+/* ── STAT ROW ── */
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: var(--text-2); }
+.stat-value { font-weight: 600; font-family: var(--mono); }
+
+@media (min-width: 431px) {
+  body { align-items: center; min-height: 100vh; background: #E8E7E3; padding: 20px; }
+  .app-shell { border-radius: 24px; max-height: 90vh; overflow: hidden; box-shadow: 0 4px 40px rgba(0,0,0,0.14); }
+  .screen.active { max-height: 90vh; overflow: hidden; }
+  .scroll-content { overflow-y: auto; }
+}
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+<!-- ══════════════════════════════
+     TELA 1: LOGIN
+════════════════════════════════ -->
+<div id="screen-login" class="screen active">
+  <div class="login-header">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <h1 style="margin-bottom:6px;">Controle de<br>Despesas</h1>
+    <p style="font-size:14px; color:var(--text-2);">Faça login para continuar</p>
+  </div>
+  <div class="scroll-content" style="padding-top:28px;">
+    <div class="field">
+      <label>E-mail</label>
+      <input type="email" id="login-email" value="sergio@empresa.com.br" placeholder="seu@email.com.br">
+    </div>
+    <div class="field">
+      <label>Senha</label>
+      <input type="password" id="login-senha" value="123456" placeholder="••••••••">
+    </div>
+    <button class="btn btn-primary btn-full" style="margin-top:8px;" onclick="fazerLogin()">Entrar</button>
+    <p style="text-align:center; font-size:12px; color:var(--text-3); margin-top:16px;">Primeiro acesso? Solicite ao administrador.</p>
+
+    <div style="margin-top:32px; padding:14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);">
+      <p style="font-size:12px; font-weight:600; color:var(--text-2); margin-bottom:8px;">DEMO — Contas de teste</p>
+      <p style="font-size:12px; color:var(--text-2); margin-bottom:4px;"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="8cffe9feebe5e3cce9e1fcfee9ffeda2efe3e1a2eefe">[email&#160;protected]</a> · <span style="font-family:var(--mono);">123456</span> (consultor)</p>
+      <p style="font-size:12px; color:var(--text-2); margin-bottom:4px;"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="2647424b4f4866434b56544355470845494b084454">[email&#160;protected]</a> · <span style="font-family:var(--mono);">admin</span> (administrador)</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 2: HOME CONSULTOR
+════════════════════════════════ -->
+<div id="screen-home" class="screen">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="avatar" id="home-avatar">SG</div>
+      <div>
+        <p style="font-size:12px;color:var(--text-2);">Olá,</p>
+        <p style="font-size:15px;font-weight:600;" id="home-nome">Sergio</p>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="fazerLogout()">Sair</button>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label">Março 2026</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">KM rodados</div>
+        <div class="metric-value">1.947</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Média km/l</div>
+        <div class="metric-value">12,1</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Combustível</div>
+        <div class="metric-value" style="font-size:17px;">R$ 1.135</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Total geral</div>
+        <div class="metric-value" style="font-size:17px;">R$ 1.312</div>
+      </div>
+    </div>
+
+    <div class="section-label">Semanas</div>
+    <div class="card" style="margin-bottom:10px;">
+      <div class="week-item" onclick="irParaSemana()">
+        <div>
+          <div class="week-title">02/03 a 08/03/2026</div>
+          <div class="week-sub">694 km · R$ 527,35 combust.</div>
+        </div>
+        <span class="badge badge-blue">Enviado</span>
+      </div>
+      <div class="week-item" onclick="irParaSemana()">
+        <div>
+          <div class="week-title">23/02 a 01/03/2026</div>
+          <div class="week-sub">581 km · R$ 490,00 combust.</div>
+        </div>
+        <span class="badge badge-green">Aprovado</span>
+      </div>
+      <div class="week-item" onclick="irParaSemana()">
+        <div>
+          <div class="week-title">16/02 a 22/02/2026</div>
+          <div class="week-sub">672 km · R$ 447,00 combust.</div>
+        </div>
+        <span class="badge badge-green">Aprovado</span>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="irParaNovaSemana()">+ Nova semana</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item active" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-semana')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-checklist')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 3: SEMANA
+════════════════════════════════ -->
+<div id="screen-semana" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-home')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title">02/03 a 08/03</span>
+    <span class="badge badge-amber">Rascunho</span>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label">Percurso em KM</div>
+    <div class="card">
+      <div class="card-body" style="padding:12px 14px;">
+        <table class="day-grid">
+          <thead>
+            <tr>
+              <th style="width:80px;">Dia</th>
+              <th>Destino</th>
+              <th style="width:60px;">KM ini.</th>
+              <th style="width:60px;">KM fin.</th>
+              <th style="width:52px;text-align:right;">Total</th>
+            </tr>
+          </thead>
+          <tbody id="km-tbody">
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Seg 02/03</td>
+              <td><input type="text" value="Passos" oninput="calcTotal(this)"></td>
+              <td><input type="number" value="8350" oninput="calcTotal(this)" data-col="ini" data-row="0"></td>
+              <td><input type="number" value="8580" oninput="calcTotal(this)" data-col="fin" data-row="0"></td>
+              <td class="day-total" id="tot-0">230</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Ter 03/03</td>
+              <td><input type="text" value="Muzambinho" oninput="calcTotal(this)"></td>
+              <td><input type="number" value="8580" oninput="calcTotal(this)" data-col="ini" data-row="1"></td>
+              <td><input type="number" value="8778" oninput="calcTotal(this)" data-col="fin" data-row="1"></td>
+              <td class="day-total" id="tot-1">198</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Qua 04/03</td>
+              <td><input type="text" placeholder="Destino"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="2"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="2"></td>
+              <td class="day-total" id="tot-2">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Qui 05/03</td>
+              <td><input type="text" placeholder="Destino"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="3"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="3"></td>
+              <td class="day-total" id="tot-3">—</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Sex 06/03</td>
+              <td><input type="text" value="Alfenas" oninput="calcTotal(this)"></td>
+              <td><input type="number" value="8880" oninput="calcTotal(this)" data-col="ini" data-row="4"></td>
+              <td><input type="number" value="8932" oninput="calcTotal(this)" data-col="fin" data-row="4"></td>
+              <td class="day-total" id="tot-4">52</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-2);font-size:12px;">Sáb 07/03</td>
+              <td><input type="text" placeholder="Destino"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="ini" data-row="5"></td>
+              <td><input type="number" placeholder="0" oninput="calcTotal(this)" data-col="fin" data-row="5"></td>
+              <td class="day-total" id="tot-5">—</td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 4px 0;border-top:1px solid var(--border);margin-top:4px;">
+          <span style="font-size:12px;font-weight:600;color:var(--text-2);">TOTAL KM</span>
+          <span id="km-total" style="font-family:var(--mono);font-weight:600;">694 km</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Despesas</div>
+    <div class="card">
+      <div class="card-row">
+        <div>
+          <div style="font-size:14px;font-weight:500;">Combustível — Seg 02/03</div>
+          <div style="font-size:12px;color:var(--text-2);">41,8 L · odom. 8.477</div>
+        </div>
+        <span style="font-family:var(--mono);font-weight:600;">R$ 254,68</span>
+      </div>
+      <div class="card-row">
+        <div>
+          <div style="font-size:14px;font-weight:500;">Combustível — Sex 06/03</div>
+          <div style="font-size:12px;color:var(--text-2);">43,35 L · odom. 8.990</div>
+        </div>
+        <span style="font-family:var(--mono);font-weight:600;">R$ 272,67</span>
+      </div>
+      <div class="card-row" style="cursor:pointer;" onclick="navTo('screen-despesa')">
+        <span style="font-size:13px;color:var(--blue);font-weight:500;">+ Adicionar despesa</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="section-label">Resumo da semana</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="stat-row"><span class="stat-label">Total KM</span><span class="stat-value">694 km</span></div>
+        <div class="stat-row"><span class="stat-label">Litros abastecidos</span><span class="stat-value">85,15 L</span></div>
+        <div class="stat-row"><span class="stat-label">Média km/l</span><span class="stat-value" style="color:var(--green);">12,10</span></div>
+        <div class="stat-row"><span class="stat-label">Combustível</span><span class="stat-value">R$ 527,35</span></div>
+        <div class="stat-row"><span class="stat-label">Outras despesas</span><span class="stat-value">R$ 0,00</span></div>
+        <div class="stat-row"><span class="stat-label">Total semana</span><span class="stat-value" style="font-size:16px;">R$ 527,35</span></div>
+      </div>
+    </div>
+
+    <button class="btn btn-secondary btn-full" onclick="showToast('Rascunho salvo!')">Salvar rascunho</button>
+    <button class="btn btn-success btn-full" onclick="enviarSemana()">Enviar para aprovação</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-checklist')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 4: NOVA DESPESA
+════════════════════════════════ -->
+<div id="screen-despesa" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-semana')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title">Nova despesa</span>
+    <span></span>
+  </div>
+  <div class="scroll-content">
+    <div class="field">
+      <label>Tipo de despesa</label>
+      <div class="tipo-pills">
+        <span class="tipo-pill selected" onclick="selecionarTipo(this,'combustivel')">Combustível</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'refeicao')">Refeição</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'hotel')">Hotel</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'pedagio')">Pedágio</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'lavagem')">Lavagem</span>
+        <span class="tipo-pill" onclick="selecionarTipo(this,'outras')">Outras</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Dia da semana</label>
+      <select>
+        <option>Segunda-feira, 02/03</option>
+        <option>Terça-feira, 03/03</option>
+        <option>Quarta-feira, 04/03</option>
+        <option>Quinta-feira, 05/03</option>
+        <option>Sexta-feira, 06/03</option>
+        <option>Sábado, 07/03</option>
+      </select>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Valor (R$)</label>
+        <input type="number" step="0.01" placeholder="0,00" id="desp-valor">
+      </div>
+      <div class="field" id="litros-group">
+        <label>Litros</label>
+        <input type="number" step="0.01" placeholder="0,0" id="desp-litros">
+      </div>
+    </div>
+
+    <div class="field" id="odometro-group">
+      <label>Odômetro atual (km)</label>
+      <input type="number" placeholder="Ex: 8477" id="desp-odom">
+    </div>
+
+    <div id="media-preview" style="display:none; padding:12px 14px; background:var(--green-bg); border:1px solid var(--green-border); border-radius:var(--radius); margin-bottom:14px; font-size:13px; color:var(--green);">
+      Média calculada: <strong id="media-valor">—</strong> km/l
+    </div>
+
+    <div class="field">
+      <label>Cupom / Comprovante</label>
+      <div class="upload-box" onclick="showToast('Câmera não disponível no demo')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <rect x="3" y="6" width="18" height="14" rx="2"/>
+          <circle cx="12" cy="13" r="3"/>
+          <path d="M9 6l1-2h4l1 2"/>
+        </svg>
+        <p>Tirar foto ou escolher arquivo</p>
+        <span>JPG, PNG ou PDF · máx. 10 MB</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Observação (opcional)</label>
+      <textarea rows="2" placeholder="Ex: posto Shell BR-267" style="resize:none;"></textarea>
+    </div>
+
+    <button class="btn btn-success btn-full" onclick="salvarDespesa()">Salvar despesa</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 5: CHECKLIST
+════════════════════════════════ -->
+<div id="screen-checklist" class="screen">
+  <div class="topbar">
+    <button class="topbar-back" onclick="navTo('screen-home')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+      Voltar
+    </button>
+    <span class="topbar-title">Checklist</span>
+    <span></span>
+  </div>
+  <div class="scroll-content">
+    <div style="padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:16px; font-size:13px; color:var(--text-2);">
+      Semana 02/03 · Veículo <strong style="color:var(--text);">ABC-1234 — Hilux SR</strong>
+    </div>
+
+    <div class="section-label">Motor e fluidos</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Nível do óleo</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Nível da água / arrefec.</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Nível do óleo hidráulico</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Pneus</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Calibragem (4 rodas + step)</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Desgaste / vida útil</span>
+          <div class="check-buttons">
+            <button class="check-btn" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn nok" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Luzes e elétrica</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">Faróis dianteiros</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Lanternas traseiras</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Setas (4 cantos)</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">Documentação</div>
+    <div class="card">
+      <div class="card-body">
+        <div class="check-item">
+          <span class="check-item-label">CRLV em dia</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+        <div class="check-item">
+          <span class="check-item-label">Seguro vigente</span>
+          <div class="check-buttons">
+            <button class="check-btn ok" onclick="toggleChk(this,'ok')">OK</button>
+            <button class="check-btn" onclick="toggleChk(this,'nok')">Atenção</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:4px;">
+      <label>Observações gerais</label>
+      <textarea rows="3" placeholder="Algum problema ou observação importante..." style="resize:none;"></textarea>
+    </div>
+
+    <button class="btn btn-success btn-full" onclick="enviarChecklist()">Enviar checklist</button>
+  </div>
+  <div class="bottom-nav">
+    <div class="bnav-item" onclick="navTo('screen-home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="12" width="6" height="9" rx="1"/><rect x="9" y="7" width="6" height="14" rx="1"/><rect x="15" y="9" width="6" height="12" rx="1"/>
+      </svg>
+      Resumo
+    </div>
+    <div class="bnav-item" onclick="navTo('screen-semana')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="17" y2="13"/><line x1="7" y1="17" x2="12" y2="17"/>
+      </svg>
+      Semana
+    </div>
+    <div class="bnav-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-4"/>
+      </svg>
+      Checklist
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════
+     TELA 6: ADMIN — PAINEL GERAL
+════════════════════════════════ -->
+<div id="screen-admin" class="screen">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="avatar" style="background:var(--text);color:#fff;">A</div>
+      <div>
+        <p style="font-size:12px;color:var(--text-2);">Administrador</p>
+        <p style="font-size:15px;font-weight:600;">Painel geral</p>
+      </div>
+    </div>
+    <button class="btn-ghost" onclick="fazerLogout()">Sair</button>
+  </div>
+  <div class="scroll-content">
+    <div class="section-label">Março 2026 — todos os consultores</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">KM total frota</div>
+        <div class="metric-value" style="font-size:18px;">34.893</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Custo total</div>
+        <div class="metric-value" style="font-size:16px;">R$ 18.940</div>
+      </div>
+    </div>
+
+    <div class="section-label">Por consultor</div>
+    <div class="card">
+      <div class="consultant-row header">
+        <span>Consultor</span>
+        <span>KM</span>
+        <span>Combust.</span>
+        <span>Total</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Sergio</span>
+        <span class="mono">1.947</span>
+        <span class="mono">R$ 1.135</span>
+        <span class="mono">R$ 1.312</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Stenio</span>
+        <span class="mono">4.210</span>
+        <span class="mono">R$ 2.128</span>
+        <span class="mono">R$ 2.473</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Wander</span>
+        <span class="mono">2.771</span>
+        <span class="mono">R$ 1.304</span>
+        <span class="mono">R$ 1.359</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Eric</span>
+        <span class="mono">3.547</span>
+        <span class="mono">R$ 1.719</span>
+        <span class="mono">R$ 2.164</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Marcos</span>
+        <span class="mono">417</span>
+        <span class="mono">R$ 709</span>
+        <span class="mono">R$ 817</span>
+      </div>
+      <div class="consultant-row">
+        <span style="font-weight:500;">Marina</span>
+        <span class="mono">2.771</span>
+        <span class="mono">R$ 1.049</span>
+        <span class="mono">R$ 1.604</span>
+      </div>
+      <div class="consultant-row" style="border-top:1px solid var(--border-strong);font-weight:600;">
+        <span>Total</span>
+        <span class="mono">34.893</span>
+        <span class="mono">R$ 14.730</span>
+        <span class="mono">R$ 18.940</span>
+      </div>
+    </div>
+
+    <div class="section-label">Semanas aguardando aprovação</div>
+    <div class="card">
+      <div class="week-item" onclick="showToast('Semana aberta para revisão')">
+        <div>
+          <div class="week-title">Sergio · 02/03 a 08/03</div>
+          <div class="week-sub">694 km · R$ 527,35</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <span class="badge badge-blue">Enviado</span>
+          <div style="display:flex;gap:4px;">
+            <button onclick="event.stopPropagation();showToast('Semana aprovada!')" style="font-size:11px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Aprovar</button>
+            <button onclick="event.stopPropagation();showToast('Semana devolvida')" style="font-size:11px;padding:2px 8px;background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Devolver</button>
+          </div>
+        </div>
+      </div>
+      <div class="week-item" onclick="showToast('Semana aberta para revisão')">
+        <div>
+          <div class="week-title">Eric · 02/03 a 08/03</div>
+          <div class="week-sub">812 km · R$ 490,00</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <span class="badge badge-blue">Enviado</span>
+          <div style="display:flex;gap:4px;">
+            <button onclick="event.stopPropagation();showToast('Semana aprovada!')" style="font-size:11px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Aprovar</button>
+            <button onclick="event.stopPropagation();showToast('Semana devolvida')" style="font-size:11px;padding:2px 8px;background:var(--red-bg);color:var(--red);border:1px solid var(--red-border);border-radius:6px;cursor:pointer;font-family:var(--font);font-weight:600;">Devolver</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+// ── ESTADO ──
+const usuarios = {
+  'sergio@empresa.com.br':  { nome: 'Sergio',   sigla: 'SG', perfil: 'consultor' },
+  'admin@empresa.com.br':   { nome: 'Admin',    sigla: 'A',  perfil: 'admin' },
+};
+let usuarioAtual = null;
+
+// ── NAVEGAÇÃO ──
+function navTo(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function irParaSemana()  { navTo('screen-semana'); }
+function irParaNovaSemana() { navTo('screen-semana'); }
+
+// ── LOGIN ──
+function fazerLogin() {
+  const email = document.getElementById('login-email').value.trim().toLowerCase();
+  const senha = document.getElementById('login-senha').value;
+  const u = usuarios[email];
+  if (!u) { showToast('E-mail não encontrado'); return; }
+  if ((email === 'sergio@empresa.com.br' && senha !== '123456') ||
+      (email === 'admin@empresa.com.br'  && senha !== 'admin')) {
+    showToast('Senha incorreta'); return;
+  }
+  usuarioAtual = u;
+  if (u.perfil === 'admin') {
+    navTo('screen-admin');
+  } else {
+    document.getElementById('home-nome').textContent = u.nome;
+    document.getElementById('home-avatar').textContent = u.sigla;
+    navTo('screen-home');
+  }
+}
+
+function fazerLogout() {
+  usuarioAtual = null;
+  navTo('screen-login');
+}
+
+// ── KM CALC ──
+function calcTotal(input) {
+  const row = input.closest('tr');
+  if (!row) return;
+  const inputs = row.querySelectorAll('input[type="number"]');
+  if (inputs.length < 2) return;
+  const ini = parseFloat(inputs[0].value) || 0;
+  const fin = parseFloat(inputs[1].value) || 0;
+  const rowIdx = input.dataset.row || Array.from(row.parentElement.children).indexOf(row);
+  const totEl = document.getElementById('tot-' + rowIdx);
+  if (totEl) {
+    const diff = fin - ini;
+    totEl.textContent = diff > 0 ? diff : '—';
+  }
+  recalcTotalKm();
+}
+
+function recalcTotalKm() {
+  let total = 0;
+  for (let i = 0; i < 6; i++) {
+    const el = document.getElementById('tot-' + i);
+    if (el) {
+      const v = parseInt(el.textContent);
+      if (!isNaN(v)) total += v;
+    }
+  }
+  const el = document.getElementById('km-total');
+  if (el) el.textContent = total + ' km';
+}
+
+// ── TIPO DESPESA ──
+function selecionarTipo(pill, tipo) {
+  document.querySelectorAll('.tipo-pill').forEach(p => p.classList.remove('selected'));
+  pill.classList.add('selected');
+  const litros = document.getElementById('litros-group');
+  const odom   = document.getElementById('odometro-group');
+  const media  = document.getElementById('media-preview');
+  if (tipo === 'combustivel') {
+    litros.style.display = 'block';
+    odom.style.display = 'block';
+    media.style.display = 'none';
+  } else {
+    litros.style.display = 'none';
+    odom.style.display = 'none';
+    media.style.display = 'none';
+  }
+}
+
+// Calcular média ao digitar litros/odom
+document.addEventListener('input', function(e) {
+  const litrosEl = document.getElementById('desp-litros');
+  const odomEl   = document.getElementById('desp-odom');
+  const mediaEl  = document.getElementById('media-preview');
+  const mediaVal = document.getElementById('media-valor');
+  if (!litrosEl || !odomEl) return;
+  const litros = parseFloat(litrosEl.value);
+  const odom   = parseFloat(odomEl.value);
+  if (litros > 0 && odom > 0) {
+    mediaEl.style.display = 'block';
+    mediaVal.textContent  = '—';
+  }
+});
+
+// ── CHECKLIST ──
+function toggleChk(btn, tipo) {
+  const btns = btn.parentElement.querySelectorAll('.check-btn');
+  btns.forEach(b => { b.classList.remove('ok', 'nok'); });
+  btn.classList.add(tipo);
+}
+
+// ── AÇÕES ──
+function salvarDespesa() {
+  showToast('Despesa salva!');
+  setTimeout(() => navTo('screen-semana'), 600);
+}
+
+function enviarSemana() {
+  showToast('Semana enviada para aprovação!');
+  setTimeout(() => navTo('screen-hom
